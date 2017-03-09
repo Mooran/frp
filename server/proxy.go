@@ -83,11 +83,12 @@ type TcpProxy struct {
 }
 
 func (pxy *TcpProxy) Run() error {
-	listener, err := net.ListenTcp(config.ServerCommonCfg.BindAddr, int64(pxy.cfg.RemotePort))
+	listener, err := net.ListenTcp(config.ServerCommonCfg.BindAddr, pxy.cfg.RemotePort)
 	if err != nil {
 		return err
 	}
 	pxy.listeners = append(pxy.listeners, listener)
+	pxy.Info("tcp proxy listen port [%d]", pxy.cfg.RemotePort)
 
 	go func(l net.Listener) {
 		for {
@@ -119,6 +120,42 @@ type HttpProxy struct {
 }
 
 func (pxy *HttpProxy) Run() (err error) {
+	for _, domain := range pxy.cfg.CustomDomains {
+		if len(pxy.cfg.Locations) == 0 {
+			l, err := pxy.ctl.svr.VhostHttpMuxer.Listen(domain, "", pxy.cfg.HostHeaderRewrite, pxy.cfg.HttpUser, pxy.cfg.HttpPwd)
+			if err != nil {
+				return err
+			}
+			pxy.Info("http proxy listen for host [%s] location [%s]", pxy.cfg.ProxyName, domain, "")
+			pxy.listeners = append(pxy.listeners, l)
+		} else {
+			for _, location := range pxy.cfg.Locations {
+				l, err := pxy.ctl.svr.VhostHttpMuxer.Listen(domain, location, pxy.cfg.HostHeaderRewrite,
+					pxy.cfg.HttpUser, pxy.cfg.HttpPwd)
+				if err != nil {
+					return err
+				}
+				pxy.Info("http listen for host [%s] location [%s]", pxy.cfg.ProxyName, domain, location)
+				pxy.listeners = append(pxy.listeners, l)
+			}
+		}
+	}
+
+	for _, listener := range pxy.listeners {
+		go func(l net.Listener) {
+			for {
+				// block
+				// if listener is closed, err returned
+				c, err := l.Accept()
+				if err != nil {
+					pxy.Info("listener is closed")
+					return
+				}
+				pxy.Debug("got one user connection [%s]", c.RemoteAddr().String())
+				go HandleUserTcpConnection(pxy, c)
+			}
+		}(listener)
+	}
 	return
 }
 

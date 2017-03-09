@@ -125,6 +125,27 @@ func (pxy *HttpProxy) Close() {
 
 func (pxy *HttpProxy) InWorkConn(conn net.Conn) {
 	defer conn.Close()
+	localConn, err := net.ConnectTcpServer(fmt.Sprintf("%s:%d", pxy.cfg.LocalIp, pxy.cfg.LocalPort))
+	if err != nil {
+		conn.Error("connect to local service [%s:%d] error: %v", pxy.cfg.LocalIp, pxy.cfg.LocalPort, err)
+		return
+	}
+
+	var remote io.ReadWriteCloser
+	remote = conn
+	if pxy.cfg.UseEncryption {
+		remote, err = tcp.WithEncryption(remote, []byte(config.ClientCommonCfg.PrivilegeToken))
+		if err != nil {
+			conn.Error("create encryption stream error: %v", err)
+			return
+		}
+	}
+	if pxy.cfg.UseCompression {
+		remote = tcp.WithCompression(remote)
+	}
+	conn.Debug("join connections")
+	tcp.Join(localConn, remote)
+	conn.Debug("join connections closed")
 }
 
 // HTTPS
